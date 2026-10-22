@@ -47,4 +47,3 @@ Ejemplo de script de entrega (`run_caracoles.sh`):
 
 python Caracoles.py
 ```
-"# Clasificacion-Caracoles-Resnet50" 
