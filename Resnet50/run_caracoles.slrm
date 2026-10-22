@@ -1,0 +1,19 @@
+#!/bin/bash
+#SBATCH --account=curso04
+#SBATCH --job-name=caracoles
+#SBATCH --partition=gpu
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=32G
+#SBATCH --time=04:00:00
+#SBATCH --output=caracoles_%j.log
+
+# 1. Initialize Conda for this batch script
+eval "$(conda shell.bash hook)"
+
+# 2. Activate your environment
+conda activate caracoles
+
+# 3. Run your code
+cd ~/caracoles
+python Caracoles.py
