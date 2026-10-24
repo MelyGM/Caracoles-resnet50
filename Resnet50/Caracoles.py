@@ -17,6 +17,8 @@ Clasificación de imágenes de caracoles en **6 familias** usando **ResNet50** p
 4. Resultados: 4 gráficas individuales (loss y accuracy por modelo), 2 matrices de confusión y 2 gráficas comparativas
 """
 
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 import os
@@ -58,31 +60,62 @@ print(f"{len(clases)} clases encontradas: {clases}")
 directorio_datos = 'mis_imagenes/CARACOLES'
 
 BATCH_SIZE = 32
-IMG_SIZE = (160, 160)
+IMG_SIZE = (224, 224)
 
-"""### Dataset de entrenamiento"""
+"""### División 60 % train / 20 % validación / 20 % test (estratificada)
 
-train_dataset = tf.keras.utils.image_dataset_from_directory(
-  directorio_datos,
-  validation_split=0.2,
-  subset="training",
-  seed=123,
-  image_size=IMG_SIZE,
-  batch_size=BATCH_SIZE)
+`image_dataset_from_directory` solo permite dos subconjuntos y su reparto no
+garantiza proporciones por clase. En su lugar se listan las rutas de las
+imágenes y se reparten con `train_test_split` de sklearn usando `stratify`,
+así cada familia queda representada en la misma proporción en los tres
+subconjuntos.
+"""
 
-"""### Dataset de validación"""
+from sklearn.model_selection import train_test_split
 
-validation_dataset = tf.keras.utils.image_dataset_from_directory(
-  directorio_datos,
-  validation_split=0.2,
-  subset="validation",
-  seed=123,
-  image_size=IMG_SIZE,
-  batch_size=BATCH_SIZE)
-
-class_names = train_dataset.class_names
+class_names = clases  # orden alfabético, igual que image_dataset_from_directory
 num_classes = len(class_names)
 print(f"Clases de caracoles encontradas ({num_classes}): {class_names}")
+
+EXTENSIONES_IMG = ('.bmp', '.gif', '.jpeg', '.jpg', '.png')
+rutas, etiquetas = [], []
+for i, clase in enumerate(class_names):
+    carpeta = os.path.join(directorio_datos, clase)
+    archivos = [f for f in os.listdir(carpeta) if f.lower().endswith(EXTENSIONES_IMG)]
+    rutas += [os.path.join(carpeta, f) for f in archivos]
+    etiquetas += [i] * len(archivos)
+
+# 60 % train + 40 % temporal; el temporal se parte en mitades → 20 % val + 20 % test
+rutas_train, rutas_rest, y_train, y_rest = train_test_split(
+    rutas, etiquetas, test_size=0.4, random_state=123, stratify=etiquetas)
+rutas_val, rutas_test, y_val, y_test = train_test_split(
+    rutas_rest, y_rest, test_size=0.5, random_state=123, stratify=y_rest)
+
+print(f"Total: {len(rutas)} imágenes → train {len(y_train)} | "
+      f"validación {len(y_val)} | test {len(y_test)}")
+for i, nombre in enumerate(class_names):
+    print(f"  {nombre}: {y_train.count(i)} train / "
+          f"{y_val.count(i)} val / {y_test.count(i)} test")
+
+AUTOTUNE = tf.data.AUTOTUNE
+
+
+def cargar_imagen(ruta, etiqueta):
+    img = tf.io.decode_image(tf.io.read_file(ruta), channels=3,
+                             expand_animations=False)
+    return tf.image.resize(img, IMG_SIZE), etiqueta
+
+
+def construir_dataset(rutas, etiquetas, barajar=False):
+    ds = tf.data.Dataset.from_tensor_slices((rutas, etiquetas))
+    if barajar:
+        ds = ds.shuffle(len(rutas), seed=123, reshuffle_each_iteration=True)
+    return ds.map(cargar_imagen, num_parallel_calls=AUTOTUNE).batch(BATCH_SIZE)
+
+
+train_dataset = construir_dataset(rutas_train, y_train, barajar=True)
+validation_dataset = construir_dataset(rutas_val, y_val)
+test_dataset = construir_dataset(rutas_test, y_test)
 
 conteos_clases = {clase: len(os.listdir(os.path.join(directorio_datos, clase)))
                   for clase in class_names}
@@ -113,9 +146,9 @@ plt.show()
 
 """**Optimizar la carga de datos**"""
 
-AUTOTUNE = tf.data.AUTOTUNE
 train_dataset = train_dataset.prefetch(buffer_size=AUTOTUNE)
 validation_dataset = validation_dataset.prefetch(buffer_size=AUTOTUNE)
+test_dataset = test_dataset.prefetch(buffer_size=AUTOTUNE)
 
 """### Pesos de clase para compensar el desbalance
 
@@ -135,7 +168,6 @@ for i, nombre in enumerate(class_names):
 """## 2. Aumento de datos y modelo base"""
 
 data_augmentation = tf.keras.Sequential([
-  tf.keras.layers.RandomFlip('horizontal'),
   tf.keras.layers.RandomRotation(0.2),
   tf.keras.layers.RandomZoom(0.1),
   tf.keras.layers.RandomContrast(0.1),
@@ -167,7 +199,8 @@ def construir_modelo(usar_augmentation):
     outputs = tf.keras.layers.Dense(num_classes)(x)
 
     model = tf.keras.Model(inputs, outputs)
-    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.0001),
+    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.0001,
+                                                     clipnorm=1.0),
                   loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
                   metrics=['accuracy'])
     return model, base_model
@@ -185,7 +218,8 @@ def aplicar_fine_tuning(model, base_model, ultimas_capas=40):
     base_model.trainable = True
     for layer in base_model.layers[:-ultimas_capas]:
         layer.trainable = False
-    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=1e-5),
+    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=1e-5,
+                                                     clipnorm=1.0),
                   loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
                   metrics=['accuracy'])
     print(f"Pesos entrenables: {len(model.trainable_weights)}")
@@ -290,11 +324,11 @@ graficar_entrenamiento(acc_con, val_acc_con, 'accuracy',
                        'Precisión — modelo CON data augmentation',
                        'accuracy_con_aug.png', ep_con)
 
-"""### Matrices de confusión"""
+"""### Matrices de confusión (sobre el conjunto de test, nunca visto en entrenamiento)"""
 
 def evaluar_modelo(model, nombre, archivo):
     y_true, y_pred = [], []
-    for images, labels in validation_dataset:
+    for images, labels in test_dataset:
         logits = model.predict(images, verbose=0)
         y_true.extend(labels.numpy())
         y_pred.extend(np.argmax(logits, axis=1))
@@ -353,7 +387,7 @@ plt.show()
 """### Ejemplos de predicción (modelo CON data augmentation)"""
 
 plt.figure(figsize=(12, 12))
-for images, labels in validation_dataset.take(1):
+for images, labels in test_dataset.take(1):
     preds = np.argmax(model_con_aug.predict(images, verbose=0), axis=1)
     for i in range(9):
         plt.subplot(3, 3, i + 1)
