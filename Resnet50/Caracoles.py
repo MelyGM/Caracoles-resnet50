@@ -398,10 +398,4 @@ plt.show()
 model_con_aug.save('clasificador_caracoles.keras')
 print("Modelo guardado: clasificador_caracoles.keras")
 
-"""### Posibles mejoras adicionales
 
-- Sobremuestrear la clase minoritaria (Risooinidae) con augmentation si `class_weight` no fuera suficiente
-- Probar otros modelos base: MobileNetV2 (más rápido) o EfficientNetV2B0
-- Aumentar `fine_tune_epochs` o descongelar más capas si el fine-tuning sigue mejorando
-- Validación cruzada (k-fold) dado el tamaño reducido del dataset
-"""
