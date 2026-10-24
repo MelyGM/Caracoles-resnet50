@@ -368,6 +368,9 @@ Se evalúa sobre el **conjunto de prueba**, que el modelo nunca vio ni para entr
 """
 
 def evaluar_modelo(model, nombre, archivo):
+    test_loss, test_acc = model.evaluate(test_dataset, verbose=0)
+    print(f"\n=== Modelo {nombre} — test loss: {test_loss:.4f} | test accuracy: {test_acc:.4f} ===")
+
     y_true, y_pred = [], []
     for images, labels in test_dataset:
         logits = model.predict(images, verbose=0)

@@ -1,49 +1,79 @@
 # Clasificación de familias de caracoles con Transfer Learning
 
-Clasificación de imágenes SEM de caracoles en **6 familias**
-(`Cerithiidae`, `Embrionic_shell`, `Eulimidae`, `Litiopidae`,
-`Neritidae`, `Risooinidae`) usando **ResNet50** preentrenado en ImageNet.
+Clasificación de imágenes SEM de caracoles en 6 familias
+(**Cerithiidae**, **Embrionic_shell**, **Eulimidae**, **Litiopidae**,
+**Neritidae**, **Risooinidae**) mediante transfer learning.
 
-## Contenido
+El proyecto compara dos dimensiones:
 
-- `Caracoles.ipynb` — notebook con el flujo completo (Colab / Jupyter)
-- `Caracoles.py` — versión script para ejecución en clúster (SLURM)
-- `Caracoles_original.ipynb` — versión inicial del ejercicio
+- **Arquitecturas**: VGG16 y ResNet50.
+- **Data augmentation**: para cada arquitectura se entrena un modelo
+  **SIN** aumento y otro **CON** aumento (rotación, zoom, contraste),
+  dando **4 modelos** en total.
 
-## Flujo de trabajo
+## Estructura del repositorio
 
-1. **Carga del dataset**: el zip se descomprime automáticamente;
-   estructura esperada `CARACOLES/<familia>/*.png`
-2. **Split** 80/20 entrenamiento/validación (`seed=123`)
-3. **Estandarización**: resize a 160×160 y `preprocess_input` de ResNet50
-4. **Comparación de dos modelos**: con y sin *data augmentation*
-   (flip, rotación, zoom, contraste)
-5. **Extracción de características**: base congelada +
-   `GlobalAveragePooling2D → Dropout(0.2) → Dense(6)`
-6. **Fine-tuning**: últimas 40 capas descongeladas, `lr=1e-5`
-7. **Evaluación**: reporte de clasificación y matriz de confusión por modelo
-
-## Resultados
-
-- Modelo SIN augmentation: **~99.3%** accuracy en validación
-- Modelo CON augmentation: **~98.8%** accuracy en validación
-## Resultados
-
-![Comparación de accuracy](resultados/comparacion_accuracy.png)
-![Matriz de confusión](resultados/matriz_con_aug.png)
-
-## Ejecución en clúster (SLURM)
-
-Ejemplo de script de entrega (`run_caracoles.sh`):
-
-```bash
-#!/bin/bash
-#SBATCH --job-name=caracoles
-#SBATCH --partition=gpu
-#SBATCH --gres=gpu:1
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=32G
-#SBATCH --time=04:00:00
-
-python Caracoles.py
 ```
+├── README.md
+├── VGG16/
+│   ├── vgg_caracoles.py          # script para ejecución en clúster (SLURM)
+│   ├── VGG_Caracoles_colab.ipynb # notebook original (Colab)
+│   ├── caracoles.slrm            # script de entrega SLURM
+│   ├── CARACOLES.zip             # dataset
+│   └── resultados_vgg/           # gráficas generadas
+└── Resnet50/
+    ├── Caracoles.py              # script para ejecución en clúster (SLURM)
+    ├── Caracoles_colab.ipynb     # notebook original (Colab)
+    ├── run_caracoles.slrm        # script de entrega SLURM
+    ├── CARACOLES.zip             # dataset
+    └── resultados/               # gráficas generadas
+```
+
+## Dataset
+
+- Imágenes SEM organizadas en `CARACOLES/<familia>/*.png`
+- Dataset **desbalanceado**: la clase minoritaria (`Risooinidae`) tiene
+  ~4.5× menos imágenes que la mayoritaria (`Neritidae`). Se compensa con
+  `class_weight` calculado solo sobre el conjunto de entrenamiento.
+- **Split estratificado 60/20/20** (train/validación/test, `seed=123`):
+  `train_test_split` con `stratify` garantiza la misma proporción de cada
+  familia en los tres subconjuntos. 
+
+## Metodología
+
+Común a ambas arquitecturas:
+
+1. **Preprocesamiento**: resize a 224×224 + `preprocess_input` propio de
+   cada arquitectura.
+2. **Cabeza clasificadora**: `GlobalAveragePooling2D → Dropout(0.2) → Dense(6)`.
+3. **Extracción de características**: base congelada, 10 épocas,
+   `Adam(lr=1e-3 a 1e-4, clipnorm=1.0)`, `class_weight`,
+   `EarlyStopping(restore_best_weights=True)` + `ReduceLROnPlateau`.
+4. **Fine-tuning**: se descongela la parte final de la base con un LR menor:
+   - **VGG16**: bloque `block5` completo, `lr = 2e-5`
+   - **ResNet50**: últimas 40 capas, `lr = 1e-5` (las capas BatchNorm se
+     mantienen en modo inferencia)
+5. **Evaluación**: reporte de clasificación (`precision`, `recall`, `f1`)
+   y matriz de confusión sobre el conjunto de **test**.
+
+## Resultados
+
+Los scripts generan por ejecución:
+
+- `distribucion_clases.png` — histograma del dataset
+- `loss_{sin,con}_aug.png` / `accuracy_{sin,con}_aug.png` — curvas por modelo
+  (con línea punteada marcando el inicio del fine-tuning)
+- `comparacion_loss.png` / `comparacion_accuracy.png` — SIN vs CON en una gráfica
+- `matriz_{sin,con}_aug.png` — matrices de confusión sobre test
+- `predicciones_ejemplo.png` — ejemplos de predicción
+- `clasificador_caracoles.keras` — modelo final (versión CON augmentation)
+- `classification_report` impreso en el log de SLURM
+
+Accuracy en validación (última corrida):
+
+| Arquitectura | Métrica | SIN augmentation | CON augmentation |
+| --- | --- | --- | --- |
+| ResNet50 | Accuracy | 99.5 % | 99.2 % |
+| ResNet50 | Loss | 0.017 | 0.023 |
+| VGG16 | Accuracy | 99.2 % | 99.0 % |
+| VGG16 | Loss | 0.019 | 0.018 |
